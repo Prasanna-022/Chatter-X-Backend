@@ -31,7 +31,8 @@ app.use(cookieParser());
 const allowedOrigins = [
     "https://chatter-x-frontend.vercel.app",      
     "https://chatter-x-frontend-qw4x.vercel.app", 
-    "http://localhost:5173",                      
+    "http://localhost:5173",          
+    "https://chatter-x-backend-lnwx-9cl9tzsn6.vercel.app",            
     process.env.CORS_ORIGIN                       
 ].filter(Boolean);
 
