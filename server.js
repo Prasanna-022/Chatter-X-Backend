@@ -2,25 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-
-
-
-dotenv.config();
-connectDB();
-configureCloudinary();
-
-const app = express();
-app.use(express.json({ limit: '16kb' })); 
-app.use(express.urlencoded({ extended: true, limit: '16kb' }));
-app.use(cookieParser());
-
-app.use(cors({
-    origin: process.env.CORS_ORIGIN || "https://chatter-x-frontend-qw4x.vercel.app",
-    credentials: true,
-}));         
-
-app.use(apiResponse);
-
+import { Server } from "socket.io"; 
 import connectDB from './src/config/db.js'; 
 
 import userRoutes from './src/routes/userRoutes.js'; 
@@ -31,9 +13,42 @@ import healthcheckRoutes from './src/routes/healthcheckRoutes.js';
 
 import { notFound, errorHandler } from './src/middleware/errorMiddleware.js';
 import { apiResponse } from './src/utils/apiResponse.js';
-
 import { configureCloudinary } from './src/utils/cloudinary.js';
 
+dotenv.config();
+connectDB();
+configureCloudinary();
+
+const app = express();
+app.use(express.json({ limit: '16kb' })); 
+app.use(express.urlencoded({ extended: true, limit: '16kb' }));
+app.use(cookieParser());
+
+// --- FIX: ROBUST CORS CONFIGURATION ---
+const allowedOrigins = [
+    "https://chatter-x-frontend.vercel.app",      // Your actual frontend URL
+    "https://chatter-x-frontend-qw4x.vercel.app", // Your alternative/env URL
+    "http://localhost:5173",                      // Local development
+    process.env.CORS_ORIGIN                       // Environment variable
+].filter(Boolean); // Remove undefined/null values
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.log("Blocked by CORS:", origin);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+};
+
+app.use(cors(corsOptions));         
+app.use(apiResponse);
 
 app.get('/', (req, res) => {
     res.standardSuccess(null, 'NovaChat API is running successfully');
@@ -55,12 +70,11 @@ const server = app.listen(
     console.log(`Server running in ${process.env.NODE_ENV} mode on port ${PORT}`)
 );
 
-import { Server } from "socket.io";
-
+// --- FIX: SOCKET.IO CORS CONFIGURATION ---
 const io = new Server(server, {
     pingTimeout: 60000, 
     cors: {
-        origin: process.env.CORS_ORIGIN || "https://chatter-x-frontend-qw4x.vercel.app", 
+        origin: allowedOrigins, // Use the same array as Express
         credentials: true,
     },
 });
