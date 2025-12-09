@@ -81,7 +81,7 @@ if (process.env.NODE_ENV !== 'production') {
     );
 
     const io = new Server(server, {
-        pingTimeout: 60000, 
+        pingTimeout: 600000, 
         cors: {
             origin: allowedOrigins,
             credentials: true,
