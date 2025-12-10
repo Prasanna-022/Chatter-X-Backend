@@ -47,13 +47,14 @@ const loginUser = asyncHandler(async (req, res) => {
       { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }
     );
         res
-        .standardSuccess({
+        .status(200)
+        .json({
             _id: user._id,
             name: user.name,
             email: user.email,
             avatar: user.avatar,
-            token: generateToken(user._id), // Inconsistent token method
-        }, 'Login successful!')
+            token: token, 
+        })
         .cookie('accessToken', token, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
