@@ -145,36 +145,38 @@ const registerUser = asyncHandler(async (req, res) => {
 });
 
 const loginUser = asyncHandler(async (req, res) => {
-    const { email, username, password } = req.body
+    const { email, password } = req.body;
 
-    if (!email && !username) {
-        throw new ApiError(400, "Email or username is required");
+    const user = await User.findOne({ email });
+
+    if (user && (await user.matchPassword(password))) {
+
+        console.log(user);
+        const token = jwt.sign(
+            { id: user._id },
+            process.env.ACCESS_TOKEN_SECRET,
+            { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }
+        );
+        console.log(token)
+        res
+            .status(200)
+            .json({
+                _id: user._id,
+                name: user.name,
+                email: user.email,
+                avatar: user.avatar,
+                token: token,
+            })
+            .cookie('accessToken', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'none',
+                maxAge: 1000 * 60 * 60 * 24 * 7,
+            })
+
+    } else {
+        throw new ApiError(401, 'Invalid Email or Password.');
     }
-
-    const user = await User.findOne({ $or: [{ username }, { email }] });
-
-    if (!user) {
-        throw new ApiError(401, "Invalid user credentials");
-    }
-
-    const isPasswordValid = await user.isPasswordCorrect(password);
-    if (!isPasswordValid) {
-        throw new ApiError(401, "Invalid user credentials");
-    }
-
-    const { accessToken, refreshToken } = await generateAccessandRefreshtoken(user._id);
-    const loggedInUser = await User.findById(user._id).select("-password -refreshToken");
-
-    const options = {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-    };
-
-    return res
-        .status(200)
-        .cookie("accessToken", accessToken, options)
-        // .cookie("refreshToken", refreshToken, options)
-        .json({ user: loggedInUser, message: "User logged in successfully" });
 });
 
 const logoutUser = asyncHandler(async (req, res) => {
