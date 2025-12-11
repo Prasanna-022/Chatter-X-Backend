@@ -5,10 +5,7 @@ import FriendRequest from "../models/friendRequestModel.js";
 import Chat from "../models/chatModel.js";
 import { deletefromCloudinary, uploadonCloudinary } from "../utils/cloudinary.js";
 import jwt from "jsonwebtoken";
-import mongoose from "mongoose";
-import bcrypt from "bcrypt";
-import { Readable } from "stream";
-import pusher from "../utils/pusher.js"; // ✅ CRITICAL IMPORT
+import pusher from "../utils/pusher.js"; // ✅ Critical for Real-time updates
 
 // --- Helper Functions ---
 
@@ -28,14 +25,6 @@ const generateAccessandRefreshtoken = async (userId) => {
         throw new ApiError(500, error?.message || "Something went wrong while generating tokens");
     }
 }
-
-const getPublicIdFromUrl = (url) => {
-    if (!url) return null;
-    const parts = url.split('/');
-    const publicIdWithFormat = parts[parts.length - 1];
-    const publicId = publicIdWithFormat.split('.')[0];
-    return publicId;
-};
 
 const geminiApiCall = async (prompt) => {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -110,7 +99,7 @@ const registerUser = asyncHandler(async (req, res) => {
     if (req.files?.avatar?.[0]?.buffer) {
         const avatarData = await uploadonCloudinary(req.files.avatar[0].buffer);
         if (avatarData) {
-            avatarUrl = avatarData.secure_url; // ✅ HTTPS
+            avatarUrl = avatarData.secure_url; // ✅ HTTPS enforced
             avatarPublicId = avatarData.public_id;
         }
     }
@@ -127,10 +116,10 @@ const registerUser = asyncHandler(async (req, res) => {
     const { accessToken, refreshToken } = await generateAccessandRefreshtoken(user._id);
     const createdUser = await User.findById(user._id).select("-password -refreshToken");
 
-    // ✅ FIXED: Cross-Site Cookies for Vercel <-> Render
+    // ✅ FIXED: Force secure: true for Render/Vercel connection
     const options = {
         httpOnly: true,
-        secure: true, // Always true for production (Render)
+        secure: true, 
         sameSite: "none", 
         maxAge: 1000 * 60 * 60 * 24 * 7 
     };
@@ -138,6 +127,7 @@ const registerUser = asyncHandler(async (req, res) => {
     return res
         .status(201)
         .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
         .json({
             user: createdUser,
             accessToken,
@@ -150,23 +140,26 @@ const loginUser = asyncHandler(async (req, res) => {
     const user = await User.findOne({ email });
 
     if (user && (await user.matchPassword(password))) {
-        const { accessToken } = await generateAccessandRefreshtoken(user._id);
+        const { accessToken, refreshToken } = await generateAccessandRefreshtoken(user._id);
+
+        const options = {
+            httpOnly: true,
+            secure: true, // ✅ Force true for production
+            sameSite: "none",
+            maxAge: 1000 * 60 * 60 * 24 * 7 
+        };
 
         return res
             .status(200)
-            .cookie("accessToken", accessToken, {
-                httpOnly: true,
-                secure: true,
-                sameSite: "none",
-                maxAge: 1000 * 60 * 60 * 24 * 7,
-            })
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
             .json({
                 user: {
                     _id: user._id,
                     name: user.name,
                     email: user.email,
                     avatar: user.avatar,
-                    token: accessToken,
+                    username: user.username
                 },
                 accessToken,
                 message: "Logged in successfully"
@@ -351,8 +344,6 @@ const sendFriendRequest = asyncHandler(async (req, res) => {
     const request = await FriendRequest.create({ sender: senderId, recipient: recipient._id });
 
     // ✅ TRIGGER PUSHER: Notify Recipient Real-time
-    // Channel Name: Recipient's User ID
-    // Event Name: 'friend-request-received'
     try {
         await pusher.trigger(recipient._id.toString(), "friend-request-received", {
             message: `New friend request from ${req.user.name}`,
@@ -380,7 +371,6 @@ const respondToFriendRequest = asyncHandler(async (req, res) => {
     const { requestId, status } = req.body;
     const recipientId = req.user._id;
 
-    // Populate sender so we can get their ID to notify them
     const request = await FriendRequest.findById(requestId).populate("sender");
 
     if (!request || !request.recipient.equals(recipientId) || request.status !== 'pending') {
@@ -400,9 +390,7 @@ const respondToFriendRequest = asyncHandler(async (req, res) => {
         });
         message = "Friend request accepted and chat room created.";
 
-        // ✅ TRIGGER PUSHER: Notify Original Sender that request was accepted
-        // Channel Name: Sender's User ID
-        // Event Name: 'request-accepted'
+        // ✅ TRIGGER PUSHER: Notify Original Sender
         try {
             await pusher.trigger(request.sender._id.toString(), "request-accepted", {
                 message: `${req.user.name} accepted your friend request`,
@@ -481,15 +469,12 @@ const updateUserProfile = asyncHandler(async (req, res) => {
         }
 
         const updatedUser = await user.save();
-        const accessToken = updatedUser.generateAccessToken();
+        const { accessToken, refreshToken } = await generateAccessandRefreshtoken(user._id);
 
         res.json({
-            _id: updatedUser._id,
-            fullName: updatedUser.fullName,
-            username: updatedUser.username,
-            email: updatedUser.email,
-            avatar: updatedUser.avatar,
-            accessToken: accessToken, 
+            user: updatedUser,
+            accessToken,
+            message: "Profile updated successfully"
         });
     } else {
         res.status(404);
