@@ -117,7 +117,7 @@ const registerUser = asyncHandler(async (req, res) => {
 
     const user = await User.create({
         name: fullName,
-        avatar: avatar.url,
+        avatar: avatar.secure_url, // ✅ FIXED: Use HTTPS url
         password,
         email,
         username: username.toLowerCase(),
@@ -128,9 +128,12 @@ const registerUser = asyncHandler(async (req, res) => {
 
     const createdUser = await User.findById(user._id).select("-password -refreshToken");
 
+    // ✅ FIXED: Added sameSite: 'none' for cross-site cookies (Render Backend -> Vercel Frontend)
     const options = {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
+        sameSite: "none",
+        maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
     };
 
     return res
@@ -185,6 +188,7 @@ const logoutUser = asyncHandler(async (req, res) => {
     const options = {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
+        sameSite: "none" // Good practice to add here too
     };
 
     return res
@@ -215,7 +219,11 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
         const { accessToken, refreshToken: newRefreshToken } = await generateAccessandRefreshtoken(user._id);
 
-        const options = { httpOnly: true, secure: process.env.NODE_ENV === "production" };
+        const options = { 
+            httpOnly: true, 
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "none"
+        };
 
         return res
             .status(200)
@@ -306,7 +314,7 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
         user._id,
         {
             $set: {
-                avatar: avatar.url,
+                avatar: avatar.secure_url, // ✅ FIXED: Use HTTPS url
                 cloudinaryPublicId: avatar.public_id
             }
         },
@@ -441,13 +449,11 @@ const updateUserProfile = asyncHandler(async (req, res) => {
             user.password = req.body.password;
         }
 
-        // ✅ FIXED: Upload to Cloudinary instead of using localhost string
         if (req.file) {
-             // We use req.file.buffer because you are using memoryStorage
              const avatarData = await uploadonCloudinary(req.file.buffer);
-             if (avatarData && avatarData.url) {
-                 user.avatar = avatarData.url;
-                 user.cloudinaryPublicId = avatarData.public_id; // Good practice to save this
+             if (avatarData && avatarData.secure_url) {
+                 user.avatar = avatarData.secure_url; // ✅ FIXED: HTTPS
+                 user.cloudinaryPublicId = avatarData.public_id;
              }
         }
 
