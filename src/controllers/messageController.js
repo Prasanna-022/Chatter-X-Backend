@@ -3,7 +3,7 @@ import asyncHandler from "express-async-handler";
 import Message from "../models/messageModel.js";
 import User from "../models/userModel.js";
 import Chat from "../models/chatModel.js";
-import pusher from "../utils/pusher.js"; 
+import pusher from "../utils/pusher.js"; // Import Pusher
 
 export const sendMessage = asyncHandler(async (req, res) => {
   const { content, chatId } = req.body;

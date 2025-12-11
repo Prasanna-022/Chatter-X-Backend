@@ -1,4 +1,3 @@
-
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
@@ -21,20 +20,25 @@ configureCloudinary();
 
 const app = express();
 
+// Increase limit for image uploads
 app.use(express.json({ limit: '10mb' })); 
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
+// --- PRODUCTION CORS CONFIGURATION ---
 app.use(cors({
-    origin: ["http://localhost:5173", "https://chatter-x-frontend-v2m8.vercel.app"],
-    credentials: true,
+    origin: [
+        "http://localhost:5173", 
+        "https://chatter-x-frontend-v2m8.vercel.app" // ✅ Your specific Vercel URL
+    ],
+    credentials: true, // Required for cookies to work across domains
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 }));
 
 app.use(apiResponse);
 
 app.get('/', (req, res) => {
-    res.standardSuccess(null, 'NovaChat API is running successfully (No Sockets)');
+    res.standardSuccess(null, 'NovaChat API is running successfully (Pusher + Zego)');
 });
 
 app.use('/healthcheck', healthcheckRoutes);

@@ -8,6 +8,7 @@ import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import { Readable } from "stream";
+import pusher from "../utils/pusher.js"; // ✅ CRITICAL IMPORT
 
 // --- Helper Functions ---
 
@@ -103,43 +104,40 @@ const registerUser = asyncHandler(async (req, res) => {
         throw new ApiError(409, "User with email or username already exists");
     }
 
-    const avatarBuffer = req.files?.avatar?.[0]?.buffer;
+    let avatarUrl = "https://icon-library.com/images/default-user-icon/default-user-icon-8.jpg";
+    let avatarPublicId = null;
 
-    if (!avatarBuffer) {
-        throw new ApiError(400, "Avatar file is required");
-    }
-
-    const avatar = await uploadonCloudinary(avatarBuffer);
-
-    if (!avatar.url) {
-        throw new ApiError(500, "Failed to upload avatar to Cloudinary");
+    if (req.files?.avatar?.[0]?.buffer) {
+        const avatarData = await uploadonCloudinary(req.files.avatar[0].buffer);
+        if (avatarData) {
+            avatarUrl = avatarData.secure_url; // ✅ HTTPS
+            avatarPublicId = avatarData.public_id;
+        }
     }
 
     const user = await User.create({
         name: fullName,
-        avatar: avatar.secure_url, // ✅ FIXED: Use HTTPS url
+        avatar: avatarUrl,
         password,
         email,
         username: username.toLowerCase(),
-        cloudinaryPublicId: avatar.public_id
+        cloudinaryPublicId: avatarPublicId
     });
 
     const { accessToken, refreshToken } = await generateAccessandRefreshtoken(user._id);
-
     const createdUser = await User.findById(user._id).select("-password -refreshToken");
 
-    // ✅ FIXED: Added sameSite: 'none' for cross-site cookies (Render Backend -> Vercel Frontend)
+    // ✅ FIXED: Cross-Site Cookies for Vercel <-> Render
     const options = {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "none",
-        maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
+        secure: true, // Always true for production (Render)
+        sameSite: "none", 
+        maxAge: 1000 * 60 * 60 * 24 * 7 
     };
 
     return res
         .status(201)
         .cookie("accessToken", accessToken, options)
-        // .cookie("refreshToken", refreshToken, options)
         .json({
             user: createdUser,
             accessToken,
@@ -149,34 +147,30 @@ const registerUser = asyncHandler(async (req, res) => {
 
 const loginUser = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
-
     const user = await User.findOne({ email });
 
     if (user && (await user.matchPassword(password))) {
+        const { accessToken } = await generateAccessandRefreshtoken(user._id);
 
-        console.log(user);
-        const token = jwt.sign(
-            { id: user._id },
-            process.env.ACCESS_TOKEN_SECRET,
-            { expiresIn: process.env.ACCESS_TOKEN_EXPIRY }
-        );
-        console.log(token)
-        res
+        return res
             .status(200)
-            .json({
-                _id: user._id,
-                name: user.name,
-                email: user.email,
-                avatar: user.avatar,
-                token: token,
-            })
-            .cookie('accessToken', token, {
+            .cookie("accessToken", accessToken, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'none',
+                secure: true,
+                sameSite: "none",
                 maxAge: 1000 * 60 * 60 * 24 * 7,
             })
-
+            .json({
+                user: {
+                    _id: user._id,
+                    name: user.name,
+                    email: user.email,
+                    avatar: user.avatar,
+                    token: accessToken,
+                },
+                accessToken,
+                message: "Logged in successfully"
+            });
     } else {
         throw new ApiError(401, 'Invalid Email or Password.');
     }
@@ -187,8 +181,8 @@ const logoutUser = asyncHandler(async (req, res) => {
 
     const options = {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "none" // Good practice to add here too
+        secure: true,
+        sameSite: "none"
     };
 
     return res
@@ -221,7 +215,7 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
         const options = { 
             httpOnly: true, 
-            secure: process.env.NODE_ENV === "production",
+            secure: true,
             sameSite: "none"
         };
 
@@ -314,7 +308,7 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
         user._id,
         {
             $set: {
-                avatar: avatar.secure_url, // ✅ FIXED: Use HTTPS url
+                avatar: avatar.secure_url, // ✅ HTTPS
                 cloudinaryPublicId: avatar.public_id
             }
         },
@@ -356,6 +350,22 @@ const sendFriendRequest = asyncHandler(async (req, res) => {
 
     const request = await FriendRequest.create({ sender: senderId, recipient: recipient._id });
 
+    // ✅ TRIGGER PUSHER: Notify Recipient Real-time
+    // Channel Name: Recipient's User ID
+    // Event Name: 'friend-request-received'
+    try {
+        await pusher.trigger(recipient._id.toString(), "friend-request-received", {
+            message: `New friend request from ${req.user.name}`,
+            sender: {
+                name: req.user.name,
+                username: req.user.username,
+                avatar: req.user.avatar
+            }
+        });
+    } catch (err) {
+        console.error("Pusher Trigger Error:", err);
+    }
+
     return res.status(201).json({ request, message: 'Friend request sent.' });
 });
 
@@ -370,7 +380,8 @@ const respondToFriendRequest = asyncHandler(async (req, res) => {
     const { requestId, status } = req.body;
     const recipientId = req.user._id;
 
-    const request = await FriendRequest.findById(requestId);
+    // Populate sender so we can get their ID to notify them
+    const request = await FriendRequest.findById(requestId).populate("sender");
 
     if (!request || !request.recipient.equals(recipientId) || request.status !== 'pending') {
         throw new ApiError(404, 'Request not found or already processed.');
@@ -382,12 +393,24 @@ const respondToFriendRequest = asyncHandler(async (req, res) => {
     let message = `Friend request ${status}.`;
 
     if (status === 'accepted') {
-        await Chat.create({
+        const createdChat = await Chat.create({
             chatName: "Direct Chat",
             isGroupChat: false,
-            users: [request.sender, request.recipient],
+            users: [request.sender._id, request.recipient],
         });
         message = "Friend request accepted and chat room created.";
+
+        // ✅ TRIGGER PUSHER: Notify Original Sender that request was accepted
+        // Channel Name: Sender's User ID
+        // Event Name: 'request-accepted'
+        try {
+            await pusher.trigger(request.sender._id.toString(), "request-accepted", {
+                message: `${req.user.name} accepted your friend request`,
+                chatId: createdChat._id
+            });
+        } catch (err) {
+            console.error("Pusher Trigger Error:", err);
+        }
     }
 
     return res.status(200).json({ request, message });
@@ -452,7 +475,7 @@ const updateUserProfile = asyncHandler(async (req, res) => {
         if (req.file) {
              const avatarData = await uploadonCloudinary(req.file.buffer);
              if (avatarData && avatarData.secure_url) {
-                 user.avatar = avatarData.secure_url; // ✅ FIXED: HTTPS
+                 user.avatar = avatarData.secure_url; // ✅ HTTPS
                  user.cloudinaryPublicId = avatarData.public_id;
              }
         }
