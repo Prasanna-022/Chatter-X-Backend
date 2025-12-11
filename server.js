@@ -26,19 +26,20 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
 // --- PRODUCTION CORS CONFIGURATION ---
+// This acts as the security guard.
 app.use(cors({
     origin: [
-        "http://localhost:5173", 
-        "https://chatter-x-frontend-v2m8.vercel.app" // ✅ Your specific Vercel URL
+        "http://localhost:5173", // Local development
+        "https://chatter-x-frontend-v2m8.vercel.app" // ✅ Your Live Vercel Frontend
     ],
-    credentials: true, // Required for cookies to work across domains
+    credentials: true, // ✅ CRITICAL: Allows cookies/tokens to pass
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 }));
 
 app.use(apiResponse);
 
 app.get('/', (req, res) => {
-    res.standardSuccess(null, 'NovaChat API is running successfully (Pusher + Zego)');
+    res.standardSuccess(null, 'NovaChat API is running (Pusher + Zego)');
 });
 
 app.use('/healthcheck', healthcheckRoutes);
