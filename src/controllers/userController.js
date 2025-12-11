@@ -430,26 +430,28 @@ const updateUserStatus = asyncHandler(async (req, res) => {
     res.status(200).json({ user: updatedUser, message: `Status set to ${online ? 'online' : 'offline'}.` });
 });
 
-// --- Fixed: Removed 'export' keyword to avoid duplicate export error ---
+
 const updateUserProfile = asyncHandler(async (req, res) => {
     const user = await User.findById(req.user._id);
 
     if (user) {
-        // Update fields if they exist in the request body
         user.fullName = req.body.fullName || user.fullName;
         user.username = req.body.username || user.username;
         if (req.body.password) {
             user.password = req.body.password;
         }
 
+        // ✅ FIXED: Upload to Cloudinary instead of using localhost string
         if (req.file) {
-            // Using local storage path as per your route config
-            user.avatar = req.file.filename;
+             // We use req.file.buffer because you are using memoryStorage
+             const avatarData = await uploadonCloudinary(req.file.buffer);
+             if (avatarData && avatarData.url) {
+                 user.avatar = avatarData.url;
+                 user.cloudinaryPublicId = avatarData.public_id; // Good practice to save this
+             }
         }
 
         const updatedUser = await user.save();
-
-        // Generate new token for the updated state
         const accessToken = updatedUser.generateAccessToken();
 
         res.json({
@@ -458,7 +460,7 @@ const updateUserProfile = asyncHandler(async (req, res) => {
             username: updatedUser.username,
             email: updatedUser.email,
             avatar: updatedUser.avatar,
-            accessToken: accessToken, // Returning access token instead of undefined 'token'
+            accessToken: accessToken, 
         });
     } else {
         res.status(404);
